@@ -3,7 +3,7 @@
    1. Configuração e dados (edite aqui: nomes, horários, contatos)
    2. Menu e navegação
    3. Equipe e programação das palestras
-   4. Agendamento em 6 etapas (horários ocupados de verdade)
+   4. Agendamento em 6 etapas (Google Apps Script)
    ========================================================= */
 (() => {
   'use strict';
@@ -21,7 +21,7 @@
     endereco: 'Rua das Acácias, 456, Jardim Belval, Barueri/SP',
     diasAntecedenciaMinima: 1,   // só agenda a partir de amanhã
     janelaDias: 90,              // até quantos dias à frente
-    storageKey: 'mamae-serena.agendamentos.v1',
+    storageKey: 'mamae-serena.agendamentos.v2',
   };
 
   const HORARIOS_CONSULTA = ['08:00', '09:30', '11:00', '14:00', '15:30']; // sessões de 1h30
@@ -51,7 +51,7 @@
       cargo: 'Psicóloga perinatal',
       formacao: 'Graduação em Psicologia, com especialização em psicologia perinatal.',
       bio: 'Acompanha gestantes e mães com foco em ansiedade, autoestima e adaptação à maternidade.',
-      iniciais: 'HD', foto: '', tom: ['#efd9d2', '#f6ebdf'],
+      iniciais: 'HD', foto: 'assets/equipe/helena.png', tom: ['#efd9d2', '#f6ebdf'],
       agenda: semana([1, 3, 5], HORARIOS_CONSULTA),
     },
     {
@@ -59,7 +59,7 @@
       cargo: 'Psicóloga clínica',
       formacao: 'Graduação em Psicologia, com formação em terapia cognitivo-comportamental.',
       bio: 'Atende mães no pós-parto e oferece escuta acolhedora para os desafios dos primeiros meses.',
-      iniciais: 'BN', foto: '', tom: ['#e4eadc', '#f6ebdf'],
+      iniciais: 'BN', foto: 'assets/equipe/beatriz.png', tom: ['#e4eadc', '#f6ebdf'],
       agenda: semana([2, 4, 5], HORARIOS_CONSULTA),
     },
     {
@@ -67,7 +67,7 @@
       cargo: 'Doula',
       formacao: 'Formação em doulagem, com curso de apoio ao parto e ao pós-parto.',
       bio: 'Oferece presença, informação e técnicas de conforto para viver a gestação e o parto com segurança.',
-      iniciais: 'CR', foto: '', tom: ['#ecc9c2', '#f8efe4'],
+      iniciais: 'CR', foto: 'assets/equipe/camila.png', tom: ['#ecc9c2', '#f8efe4'],
       agenda: semana([1, 2, 3, 4, 5], HORARIOS_CONSULTA),
     },
     {
@@ -75,7 +75,7 @@
       cargo: 'Educadora perinatal',
       formacao: 'Graduação em Enfermagem, com especialização em saúde da mulher.',
       bio: 'Conduz as palestras gratuitas com linguagem simples e espaço para todas as dúvidas.',
-      iniciais: 'MC', foto: '', tom: ['#e9dccb', '#fbf3ea'],
+      iniciais: 'MC', foto: 'assets/equipe/marina.png', tom: ['#e9dccb', '#fbf3ea'],
       // Três encontros por semana
       agenda: { 1: ['10:00'], 3: ['15:00'], 5: ['10:00'] },
       temas: {
@@ -109,7 +109,7 @@
 
   const paraISO = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const deISO = s => { const [a, m, d] = s.split('-').map(Number); return new Date(a, m - 1, d); };
-  const hoje = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
+  const hoje = () => deISO(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()));
   const somaDias = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
   const dataMin = () => somaDias(hoje(), CONFIG.diasAntecedenciaMinima);
   const dataMax = () => somaDias(hoje(), CONFIG.janelaDias);
@@ -243,23 +243,8 @@
   }
 
   // ----- Disponibilidade -----
-  // Para o site parecer "vivo" na demonstração, alguns horários já vêm ocupados.
-  // O resultado é sempre o mesmo para a mesma data (não muda ao recarregar).
-  function hash(texto) {
-    let h = 2166136261;
-    for (let i = 0; i < texto.length; i++) { h ^= texto.charCodeAt(i); h = Math.imul(h, 16777619); }
-    return h >>> 0;
-  }
-  function ocupacaoBase(prof, iso, hora) {
-    if (!CONFIG.demo) return 0;
-    const h = hash(`${prof.id}|${iso}|${hora}`) % 100;
-    return prof.capacidade === 1 ? (h < 30 ? 1 : 0) : Math.floor(h / 100 * 8);
-  }
-  function reservasDoHorario(profId, iso, hora) {
-    return lerReservas().filter(r => r.profId === profId && r.data === iso && r.hora === hora && r.status === 'confirmado').length;
-  }
   function vagas(prof, iso, hora) {
-    return Math.max(0, prof.capacidade - ocupacaoBase(prof, iso, hora) - reservasDoHorario(prof.id, iso, hora));
+    return Math.max(0, prof.capacidade - (ocupacaoRemota[`${prof.id}|${iso}|${hora}`] || 0));
   }
   function horariosDoDia(prof, iso) { return prof.agenda[deISO(iso).getDay()] || []; }
   function diaDisponivel(prof, iso) { return horariosDoDia(prof, iso).some(h => vagas(prof, iso, h) > 0); }
@@ -574,38 +559,59 @@
   }
 
   // ----- Confirmação e sucesso -----
-  function gerarProtocolo() {
-    const d = new Date();
-    const aleatorio = Math.random().toString(36).slice(2, 6).toUpperCase();
-    return `MS-${String(d.getFullYear()).slice(2)}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${aleatorio}`;
+  let enviando = false;
+  let tentativa = null;
+  let ocupacaoRemota = {};
+  async function api(acao, dados = {}) {
+    if (!window.MAMAE_SERENA_API) throw new Error('O agendamento on-line ainda não foi ativado. Entre em contato pelo WhatsApp.');
+    const resposta = await fetch(window.MAMAE_SERENA_API, {
+      method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ acao, ...dados }), redirect: 'follow',
+      signal: AbortSignal.timeout(45000),
+    });
+    if (!resposta.ok) throw new Error('Não foi possível acessar a agenda. Tente novamente.');
+    const resultado = await resposta.json();
+    if (!resultado.ok) throw new Error(resultado.erro || 'Não foi possível concluir. Tente novamente.');
+    return resultado;
   }
-
-  function confirmar() {
-    const s = servicoAtual(), p = profAtual(), d = estado.paciente;
-    // Confere de novo: outra pessoa pode ter ocupado o horário enquanto você preenchia
-    if (vagas(p, estado.data, estado.hora) < 1) {
-      estado.hora = null; estado.etapa = 4;
-      estado.aviso = 'Este horário acabou de ser ocupado. Escolha outro horário para continuar.';
-      render(true);
-      return;
+  async function atualizarDisponibilidade() {
+    if (!window.MAMAE_SERENA_API) return;
+    try {
+      const resultado = await api('disponibilidade');
+      ocupacaoRemota = resultado.ocupacao;
+      if (estado.etapa === 3 || estado.etapa === 4) render();
+    } catch (_) {
+      estado.aviso = 'Não foi possível atualizar as vagas. A disponibilidade será conferida ao confirmar.';
+      if (estado.etapa === 3 || estado.etapa === 4) render();
     }
-    const cpfNumeros = d.cpf.replace(/\D/g, '');
-    const registro = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      protocolo: gerarProtocolo(),
-      servicoId: s.id, servicoNome: s.nome, duracaoMin: s.duracaoMin, duracao: s.duracao, preco: s.preco,
-      profId: p.id, profNome: p.nome,
-      data: estado.data, hora: estado.hora,
-      // O CPF completo não é guardado: apenas os dois últimos dígitos
-      paciente: { nome: d.nome.trim(), cpf: `***.***.***-${cpfNumeros.slice(9)}`, tel: d.tel, email: d.email.trim() },
-      status: 'confirmado',
-      criadoEm: new Date().toISOString(),
-    };
-    salvarReservas([...lerReservas(), registro]);
-    estado.concluido = registro;
-    estado.aviso = '';
-    render(true);
-    $('#agenda').scrollIntoView({ block: 'start' });
+  }
+  async function confirmar() {
+    if (enviando) return;
+    estado.erros = validarDados();
+    if (Object.keys(estado.erros).length) { estado.etapa = 5; render(true); return; }
+    const dados = { servicoId: estado.servico, profId: estado.prof, data: estado.data, hora: estado.hora,
+      paciente: { nome: estado.paciente.nome.trim(), email: estado.paciente.email.trim(), tel: estado.paciente.tel },
+      consentimento: estado.paciente.ok };
+    const assinatura = JSON.stringify(dados);
+    if (!tentativa || tentativa.assinatura !== assinatura) tentativa = { assinatura, id: crypto.randomUUID() };
+    enviando = true;
+    const botoes = Array.from(document.querySelectorAll('#painel button'));
+    botoes.forEach(b => b.disabled = true);
+    const botao = document.querySelector('[data-acao="confirmar"]');
+    if (botao) botao.textContent = 'Confirmando…';
+    try {
+      const resultado = await api('reservar', { ...dados, id: tentativa.id });
+      const registro = resultado.reserva;
+      salvarReservas([...lerReservas().filter(r => r.id !== registro.id), registro]);
+      estado.concluido = registro;
+      estado.aviso = '';
+      tentativa = null;
+    } catch (erro) {
+      estado.aviso = erro.name === 'TimeoutError' || erro instanceof TypeError
+        ? 'A conexão foi interrompida. Clique em confirmar novamente para consultar a mesma solicitação, sem duplicá-la.'
+        : erro.message;
+    } finally { enviando = false; render(true); }
+    atualizarDisponibilidade();
   }
 
   function htmlSucesso(r) {
@@ -613,7 +619,7 @@
     const linhas = [
       ['Serviço', r.servicoNome], ['Profissional', r.profNome],
       ['Data', dataLonga(r.data)], ['Horário', fmtHora(r.hora)],
-      ['Local', CONFIG.endereco], ['Paciente', r.paciente.nome],
+      ['Local', CONFIG.endereco], ['Paciente', r.paciente.nome], ['Valor', fmtPreco(r.preco)], ['Duração', r.duracao], ['Fuso horário', 'Brasília (America/Sao_Paulo)'],
     ];
     const msg = `Olá! Acabei de agendar pelo site da Mamãe Serena.\n\nProtocolo: ${r.protocolo}\nServiço: ${r.servicoNome}\nProfissional: ${r.profNome}\nData: ${dataLonga(r.data)}, às ${fmtHora(r.hora)}\nNome: ${r.paciente.nome}`;
     return `
@@ -621,6 +627,7 @@
         <div class="sucesso-icone"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>
         <h3 class="painel-titulo" id="painel-titulo" tabindex="-1">Agendamento realizado com sucesso!</h3>
         <p>${palestra ? 'Sua vaga foi reservada.' : 'Sua consulta foi agendada.'} Confira os detalhes do atendimento.</p>
+        <p role="status">${r.emailEnviado ? `A confirmação foi enviada para ${esc(r.paciente.email)}. Confira também a pasta de spam.` : 'Sua reserva está registrada, mas o e-mail está pendente. Entre em contato pelo WhatsApp para receber a confirmação.'}</p>
         <span class="protocolo">Protocolo ${esc(r.protocolo)}</span>
         ${linhasResumo(linhas)}
         <div class="sucesso-acoes">
@@ -643,7 +650,7 @@
       'BEGIN:VEVENT',
       `UID:${r.id}@mamaeserena`,
       `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')}`,
-      `DTSTART:${f(ini)}`, `DTEND:${f(fim)}`,
+      `DTSTART;TZID=America/Sao_Paulo:${f(ini)}`, `DTEND;TZID=America/Sao_Paulo:${f(fim)}`,
       `SUMMARY:${t(`Mamãe Serena: ${r.servicoNome} com ${r.profNome}`)}`,
       `LOCATION:${t(CONFIG.endereco)}`,
       `DESCRIPTION:${t(`Protocolo ${r.protocolo}`)}`,
@@ -728,14 +735,21 @@
       }
     });
 
-    el.meusLista.addEventListener('click', e => {
+    el.meusLista.addEventListener('click', async e => {
       const b = e.target.closest('[data-acao]');
       if (!b) return;
       const acao = b.dataset.acao;
       if (acao === 'cancelar') { estado.cancelando = b.dataset.id; renderMeus(); $('[data-acao="cancelar-sim"]', el.meusLista)?.focus(); }
       if (acao === 'cancelar-nao') { estado.cancelando = null; renderMeus(); }
       if (acao === 'cancelar-sim') {
+        if (enviando) return;
+        const reserva = lerReservas().find(r => r.id === b.dataset.id);
+        enviando = true; b.disabled = true;
+        try { await api('cancelar', { id: reserva.id, token: reserva.token }); }
+        catch (erro) { estado.aviso = erro.message; enviando = false; render(); return; }
+        enviando = false;
         salvarReservas(lerReservas().map(r => r.id === b.dataset.id ? { ...r, status: 'cancelado' } : r));
+        atualizarDisponibilidade();
         estado.cancelando = null;
         if (estado.concluido && estado.concluido.id === b.dataset.id) estado = estadoInicial();
         render();
@@ -744,6 +758,7 @@
 
     // Botões "Agendar" espalhados pelo site
     document.addEventListener('click', e => {
+      if (enviando) { if (e.target.closest('[data-agendar], [data-agendar-prof]')) e.preventDefault(); return; }
       const porServico = e.target.closest('[data-agendar]');
       const porProf = e.target.closest('[data-agendar-prof]');
       if (!porServico && !porProf) return;
@@ -798,4 +813,7 @@
   renderizarEquipe();
   renderizarProgramacao();
   iniciarAgendamento();
+  atualizarDisponibilidade();
+  if (!window.MAMAE_SERENA_API) $('#aviso-agenda').textContent = 'Agendamento on-line em configuração. Para agendar, entre em contato pelo WhatsApp.';
 })();
+
