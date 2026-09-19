@@ -17,7 +17,7 @@
     demo: true,
     // Exige CPF válido (dígitos verificadores). Deixe true, pois é o comportamento real.
     validarCPF: true,
-    whatsapp: '5511987654321',
+    whatsapp: '5511978657116',
     endereco: 'Rua das Acácias, 456, Jardim Belval, Barueri/SP',
     diasAntecedenciaMinima: 1,   // só agenda a partir de amanhã
     janelaDias: 90,              // até quantos dias à frente
@@ -288,7 +288,7 @@
     if (p.nome.trim().split(/\s+/).filter(Boolean).length < 2 || p.nome.trim().length < 5) erros.nome = 'Informe seu nome completo (nome e sobrenome).';
     if (CONFIG.validarCPF ? !cpfValido(p.cpf) : p.cpf.replace(/\D/g, '').length !== 11) erros.cpf = 'Informe um CPF válido, com 11 números.';
     const tel = p.tel.replace(/\D/g, '');
-    if (tel.length < 10 || tel.length > 11) erros.tel = 'Informe o telefone com DDD, por exemplo (11) 98765-4321.';
+    if (tel.length < 10 || tel.length > 11) erros.tel = 'Informe o telefone com DDD, por exemplo (11) 97865-7116.';
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(p.email.trim())) erros.email = 'Informe um e-mail válido, por exemplo nome@email.com.';
     if (!p.ok) erros.ok = 'Para continuar, é preciso concordar com o uso dos dados para o agendamento.';
     return erros;
@@ -816,4 +816,5 @@
   atualizarDisponibilidade();
   if (!window.MAMAE_SERENA_API) $('#aviso-agenda').textContent = 'Agendamento on-line em configuração. Para agendar, entre em contato pelo WhatsApp.';
 })();
+
 
