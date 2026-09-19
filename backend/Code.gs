@@ -2,7 +2,7 @@
    Execute instalar() uma vez. Veja ATIVAR.md antes de publicar. */
 const ZONA = 'America/Sao_Paulo';
 const ENDERECO = 'Rua das Acácias, 456, Jardim Belval, Barueri/SP';
-const WHATSAPP = '5511987654321';
+const WHATSAPP = '5511978657116';
 const HORAS = ['08:00', '09:30', '11:00', '14:00', '15:30'];
 const PROF = {
   helena: { nome: 'Helena Duarte', servico: 'psicologia', dias: [1,3,5], capacidade: 1 },
@@ -158,3 +158,4 @@ function reenviarPendentes() {
     }
   } finally { lock.releaseLock(); }
 }
+
